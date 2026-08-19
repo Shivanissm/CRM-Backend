@@ -46,6 +46,7 @@ Thumbs.db
 # Spring Boot
 application-local.properties
 application-local.yml
+.env
 
 # Logs
 logs/
