@@ -17,7 +17,9 @@ import com.brideside.crm.repository.PipelineRepository;
 import com.brideside.crm.repository.StageRepository;
 import com.brideside.crm.repository.TeamRepository;
 import com.brideside.crm.repository.UserRepository;
+import com.brideside.crm.service.BridesideVendorService;
 import com.brideside.crm.service.PipelineService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -30,6 +32,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,19 +49,22 @@ public class PipelineServiceImpl implements PipelineService {
     private final TeamRepository teamRepository;
     private final DealRepository dealRepository;
     private final UserRepository userRepository;
+    private final BridesideVendorService bridesideVendorService;
 
     public PipelineServiceImpl(PipelineRepository pipelineRepository,
                                StageRepository stageRepository,
                                OrganizationRepository organizationRepository,
                                TeamRepository teamRepository,
                                DealRepository dealRepository,
-                               UserRepository userRepository) {
+                               UserRepository userRepository,
+                               @Lazy BridesideVendorService bridesideVendorService) {
         this.pipelineRepository = pipelineRepository;
         this.stageRepository = stageRepository;
         this.organizationRepository = organizationRepository;
         this.teamRepository = teamRepository;
         this.dealRepository = dealRepository;
         this.userRepository = userRepository;
+        this.bridesideVendorService = bridesideVendorService;
     }
 
     @Override
@@ -73,6 +79,9 @@ public class PipelineServiceImpl implements PipelineService {
 
     private PipelineDtos.PipelineResponse doCreatePipeline(PipelineDtos.PipelineRequest request, boolean requireOrganizationActive) {
         validatePipelineName(request.getName(), null);
+        if (requireOrganizationActive) {
+            validateOrganizationDoesNotAlreadyHavePipeline(request.getOrganizationId(), null);
+        }
 
         Pipeline pipeline = new Pipeline();
         pipeline.setName(request.getName().trim());
@@ -87,8 +96,8 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<PipelineDtos.PipelineResponse> listPipelines(boolean includeStages) {
+        ensureDefaultBootstrapPipelinesForAdmin();
         List<Pipeline> pipelines = getFilteredPipelines();
 
         Map<Long, List<Stage>> stagesByPipeline = includeStages
@@ -142,7 +151,11 @@ public class PipelineServiceImpl implements PipelineService {
         }
         if (request.getCategory() != null) pipeline.setCategory(trimToNull(request.getCategory()));
         if (request.getTeamId() != null) pipeline.setTeam(resolveTeam(request.getTeamId()));
-        if (request.getOrganizationId() != null) pipeline.setOrganization(resolveOrganization(request.getOrganizationId(), true));
+        if (request.getOrganizationId() != null) {
+            Long currentOrgId = pipeline.getOrganization() != null ? pipeline.getOrganization().getId() : null;
+            boolean organizationChanged = currentOrgId == null || !currentOrgId.equals(request.getOrganizationId());
+            pipeline.setOrganization(resolveOrganization(request.getOrganizationId(), organizationChanged));
+        }
         if (request.getDeleted() != null) pipeline.setDeleted(request.getDeleted());
 
         Pipeline saved = pipelineRepository.save(pipeline);
@@ -471,10 +484,8 @@ public class PipelineServiceImpl implements PipelineService {
     /**
      * Get filtered pipelines based on the current user's role
      * Visibility rules:
-     * 1. Admin: Sees all pipelines
-     * 2. Category Manager: Sees pipelines linked to teams where their Sales Managers (users who report to them) are team managers
-     * 3. Sales Manager (SALES role): Sees pipelines linked to teams they manage
-     * 4. Pre-Sales (PRESALES role): Sees pipelines linked to teams where their Sales Manager (their manager) is the team manager
+     * 1. Admin: Sees all default/bootstrap pipelines (team assigned later by admin)
+     * 2. Other roles: team-linked pipelines, unassigned bootstrap pipelines, and org-owned pipelines
      */
     private List<Pipeline> getFilteredPipelines() {
         Optional<User> currentUserOpt = getCurrentUser();
@@ -493,16 +504,124 @@ public class PipelineServiceImpl implements PipelineService {
             return pipelineRepository.findByDeletedFalseOrderByNameAsc();
         }
 
-        // Get team IDs based on role
+        Map<Long, Pipeline> visible = new LinkedHashMap<>();
+
         Set<Long> allowedTeamIds = getAllowedTeamIds(currentUser, roleName);
-        
-        // If no teams are allowed, return empty list
-        if (allowedTeamIds.isEmpty()) {
-            return Collections.emptyList();
+        if (!allowedTeamIds.isEmpty()) {
+            for (Pipeline pipeline : pipelineRepository.findByDeletedFalseAndTeam_IdInOrderByNameAsc(new ArrayList<>(allowedTeamIds))) {
+                visible.put(pipeline.getId(), pipeline);
+            }
         }
 
-        // Return pipelines linked to allowed teams
-        return pipelineRepository.findByDeletedFalseAndTeam_IdInOrderByNameAsc(new ArrayList<>(allowedTeamIds));
+        // Org bootstrap pipelines are created without a team — include them until a team is assigned manually.
+        for (Pipeline pipeline : pipelineRepository.findByDeletedFalseAndTeamIsNullOrderByNameAsc()) {
+            visible.putIfAbsent(pipeline.getId(), pipeline);
+        }
+
+        List<Long> accessibleOwnerIds = getAccessibleOrganizationOwnerIds(currentUser, roleName);
+        if (!accessibleOwnerIds.isEmpty()) {
+            for (Pipeline pipeline : pipelineRepository.findByDeletedFalseAndOrganizationOwnerIdInOrderByNameAsc(accessibleOwnerIds)) {
+                visible.putIfAbsent(pipeline.getId(), pipeline);
+            }
+        }
+
+        return visible.values().stream()
+                .sorted(Comparator.comparing(Pipeline::getName, String.CASE_INSENSITIVE_ORDER))
+                .collect(Collectors.toList());
+    }
+
+    private List<Long> getAccessibleOrganizationOwnerIds(User currentUser, Role.RoleName roleName) {
+        List<Long> ownerIds = new ArrayList<>();
+        switch (roleName) {
+            case CATEGORY_MANAGER -> ownerIds.addAll(findAccessibleOwnerIdsForCategoryManager(currentUser));
+            case SALES -> ownerIds.addAll(findAccessibleOwnerIdsForSales(currentUser));
+            case PRESALES -> {
+                if (currentUser.getId() != null) {
+                    ownerIds.add(currentUser.getId());
+                }
+            }
+            default -> {
+            }
+        }
+        return ownerIds.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<Long> findAccessibleOwnerIdsForCategoryManager(User categoryManager) {
+        List<Long> ownerIds = new ArrayList<>();
+        ownerIds.add(categoryManager.getId());
+
+        List<User> directReports = userRepository.findByManagerId(categoryManager.getId());
+        for (User report : directReports) {
+            if (report.getRole() != null) {
+                Role.RoleName reportRole = report.getRole().getName();
+                if (reportRole == Role.RoleName.SALES || reportRole == Role.RoleName.PRESALES) {
+                    ownerIds.add(report.getId());
+                }
+            }
+        }
+
+        for (User sales : directReports) {
+            if (sales.getRole() != null && sales.getRole().getName() == Role.RoleName.SALES) {
+                for (User presales : userRepository.findByManagerId(sales.getId())) {
+                    if (presales.getRole() != null && presales.getRole().getName() == Role.RoleName.PRESALES) {
+                        ownerIds.add(presales.getId());
+                    }
+                }
+            }
+        }
+
+        return ownerIds;
+    }
+
+    private List<Long> findAccessibleOwnerIdsForSales(User salesUser) {
+        List<Long> ownerIds = new ArrayList<>();
+        ownerIds.add(salesUser.getId());
+
+        for (User report : userRepository.findByManagerId(salesUser.getId())) {
+            if (report.getRole() != null && report.getRole().getName() == Role.RoleName.PRESALES) {
+                ownerIds.add(report.getId());
+            }
+        }
+
+        return ownerIds;
+    }
+
+    /**
+     * When admin opens pipelines list/dropdown, ensure every organization has its auto-created
+     * brideside vendor + default pipeline (no team — admin assigns team via Edit).
+     */
+    private void ensureDefaultBootstrapPipelinesForAdmin() {
+        Optional<User> currentUserOpt = getCurrentUser();
+        if (currentUserOpt.isEmpty() || currentUserOpt.get().getRole() == null) {
+            return;
+        }
+        if (currentUserOpt.get().getRole().getName() != Role.RoleName.ADMIN) {
+            return;
+        }
+        for (Organization organization : organizationRepository.findAll()) {
+            bridesideVendorService.createVendorForOrganization(organization.getId(), null);
+        }
+    }
+
+    private void validateOrganizationDoesNotAlreadyHavePipeline(Long organizationId, Long excludePipelineId) {
+        if (organizationId == null) {
+            return;
+        }
+        Organization organization = organizationRepository.findById(organizationId).orElse(null);
+        if (organization == null) {
+            return;
+        }
+        for (Pipeline existing : pipelineRepository.findByOrganization(organization)) {
+            if (existing == null || Boolean.TRUE.equals(existing.getDeleted())) {
+                continue;
+            }
+            if (excludePipelineId != null && excludePipelineId.equals(existing.getId())) {
+                continue;
+            }
+            throw new BadRequestException(
+                    "Organization already has a default pipeline (created automatically when the organization was saved). "
+                            + "Edit that pipeline to assign a team instead of creating a new one.");
+        }
     }
 
     /**

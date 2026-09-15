@@ -16,6 +16,8 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.NotFound;
+import org.hibernate.annotations.NotFoundAction;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -80,7 +82,11 @@ public class Organization {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id")
+    @NotFound(action = NotFoundAction.IGNORE)
     private User owner;
+
+    @Column(name = "owner_id", insertable = false, updatable = false)
+    private Long ownerId;
 
     @Column(name = "category", length = 50, nullable = false)
     @Convert(converter = OrganizationCategory.CategoryConverter.class)
@@ -122,6 +128,8 @@ public class Organization {
     public void setName(String name) { this.name = name; }
     public User getOwner() { return owner; }
     public void setOwner(User owner) { this.owner = owner; }
+    public Long getOwnerId() { return ownerId; }
+    public void setOwnerId(Long ownerId) { this.ownerId = ownerId; }
     public OrganizationCategory getCategory() { return category; }
     public void setCategory(OrganizationCategory category) { this.category = category; }
     public String getAddress() { return address; }

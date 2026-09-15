@@ -14,14 +14,21 @@ public interface DealService {
     List<Deal> list(String sortField, String sortDirection);
     List<Deal> list(Long pipelineId, String status, Long organizationId, Long categoryId, 
                     Long managerId, String dateFrom, String dateTo, String search, String source,
-                    String sortField, String sortDirection, Integer limit, Integer offset, Long stageId);
+                    String sortField, String sortDirection, Integer limit, Integer offset, Long stageId,
+                    Long personId);
     long count(Long pipelineId, String status, Long organizationId, Long categoryId, 
-               Long managerId, String dateFrom, String dateTo, String search, String source, Long stageId);
+               Long managerId, String dateFrom, String dateTo, String search, String source, Long stageId,
+               Long personId);
     List<com.brideside.crm.dto.PersonDTO> getPersonsByDealIds(List<Long> dealIds);
     List<com.brideside.crm.dto.ActivityDTO> getActivitiesByDealIds(List<Long> dealIds);
     List<Deal> listWon();
     List<Deal> listByStatus(DealStatus status);
     List<Deal> listByPerson(Long personId);
+
+    /**
+     * When a person receives a phone number, move their BOT-created deals from Lead In to Qualified.
+     */
+    void promoteBotDealsWhenPhoneReceived(Long personId);
     List<Deal> listByOrganization(Long organizationId);
     List<Deal> listByCategory(Long categoryId);
     Deal update(Long id, DealDtos.UpdateRequest request);

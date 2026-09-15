@@ -64,6 +64,8 @@ public final class PersonMapper {
             }
             dto.setOwnerDisplayName(nameBuilder.isEmpty() ? owner.getEmail() : nameBuilder.toString());
             dto.setOwnerEmail(owner.getEmail());
+        } else if (person.getOwnerId() != null) {
+            dto.setOwnerId(person.getOwnerId());
         }
 
         Category category = person.getCategory();

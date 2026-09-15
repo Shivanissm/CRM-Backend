@@ -15,6 +15,7 @@ import com.brideside.crm.service.EventPricingService;
 import com.brideside.crm.service.PipelineService;
 import com.brideside.crm.service.BridesideVendorService;
 import com.brideside.crm.service.VendorAssetService;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -78,7 +79,13 @@ public class BridesideVendorServiceImpl implements BridesideVendorService {
 
         List<BridesideVendor> existing = bridesideVendorRepository.findByOrganization_Id(organizationId);
         if (!existing.isEmpty()) {
-            return toResponse(existing.get(0));
+            BridesideVendor vendor = existing.get(0);
+            if (vendor.getPipeline() == null) {
+                Pipeline pipeline = resolveOrCreatePipeline(organization, null);
+                vendor.setPipeline(pipeline);
+                vendor = bridesideVendorRepository.save(vendor);
+            }
+            return toResponse(vendor);
         }
 
         BridesideVendorDtos.VendorCreateRequest safeRequest = request == null ? new BridesideVendorDtos.VendorCreateRequest() : request;
@@ -110,7 +117,16 @@ public class BridesideVendorServiceImpl implements BridesideVendorService {
         vendor.setOnboardingFee(safeRequest.getOnboardingFee());
         vendor.setAccountOwner(organization.getOwner());
 
-        BridesideVendor saved = bridesideVendorRepository.save(vendor);
+        BridesideVendor saved;
+        try {
+            saved = bridesideVendorRepository.save(vendor);
+        } catch (DataIntegrityViolationException ex) {
+            List<BridesideVendor> retryExisting = bridesideVendorRepository.findByOrganization_Id(organizationId);
+            if (!retryExisting.isEmpty()) {
+                return toResponse(retryExisting.get(0));
+            }
+            throw ex;
+        }
         vendorAssetService.createForVendor(saved.getId(), organization.getId());
         return toResponse(saved);
     }
@@ -207,16 +223,29 @@ public class BridesideVendorServiceImpl implements BridesideVendorService {
         }
 
         PipelineDtos.PipelineRequest createRequest = new PipelineDtos.PipelineRequest();
-        String organizationName = organization.getName();
-        if (organizationName != null && !organizationName.isBlank()) {
-            createRequest.setName(organizationName.trim());
-        } else {
-            createRequest.setName("Default Pipeline - Org " + organization.getId());
-        }
+        createRequest.setName(resolveBootstrapPipelineName(organization));
         createRequest.setOrganizationId(organization.getId());
+        if (organization.getCategory() != null) {
+            createRequest.setCategory(organization.getCategory().getDbValue());
+        }
+        // Team is intentionally left unset — admin assigns team from Pipelines page.
         PipelineDtos.PipelineResponse created = pipelineService.createPipelineForBootstrap(createRequest);
         return pipelineRepository.findById(created.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Pipeline not found with id " + created.getId()));
+    }
+
+    private String resolveBootstrapPipelineName(Organization organization) {
+        String base = organization.getName() != null && !organization.getName().isBlank()
+                ? organization.getName().trim()
+                : "Default Pipeline - Org " + organization.getId();
+        if (!pipelineRepository.existsByNameIgnoreCase(base)) {
+            return base;
+        }
+        String withOrgId = base + " (Org " + organization.getId() + ")";
+        if (!pipelineRepository.existsByNameIgnoreCase(withOrgId)) {
+            return withOrgId;
+        }
+        return "Default Pipeline - Org " + organization.getId();
     }
 
     private String resolveOrGenerateUsername(Long organizationId, String requestedUsername) {

@@ -312,7 +312,14 @@ public class OrganizationServiceImpl implements OrganizationService {
         OrganizationDtos.OrganizationResponse response = new OrganizationDtos.OrganizationResponse();
         response.setId(organization.getId());
         response.setName(organization.getName());
-        response.setOwner(toOwnerSummary(organization.getOwner()));
+        User owner = organization.getOwner();
+        if (owner != null) {
+            response.setOwner(toOwnerSummary(owner));
+        } else if (organization.getOwnerId() != null) {
+            OrganizationDtos.OwnerSummary summary = new OrganizationDtos.OwnerSummary();
+            summary.setId(organization.getOwnerId());
+            response.setOwner(summary);
+        }
         response.setCategory(organization.getCategory());
         response.setAddress(organization.getAddress());
         response.setEmail(organization.getEmail());
