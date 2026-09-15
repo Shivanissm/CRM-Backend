@@ -23,6 +23,7 @@ import com.brideside.crm.repository.PersonSpecifications;
 import com.brideside.crm.repository.UserRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -49,6 +50,7 @@ public class PersonService {
     private final LabelRepository labelRepository;
     private final DealRepository dealRepository;
     private final ActivityRepository activityRepository;
+    private final DealService dealService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PersonService(PersonRepository repository,
@@ -57,7 +59,8 @@ public class PersonService {
                          CategoryRepository categoryRepository,
                          LabelRepository labelRepository,
                          DealRepository dealRepository,
-                         ActivityRepository activityRepository) {
+                         ActivityRepository activityRepository,
+                         @Lazy DealService dealService) {
         this.repository = repository;
         this.organizationRepository = organizationRepository;
         this.userRepository = userRepository;
@@ -65,6 +68,7 @@ public class PersonService {
         this.labelRepository = labelRepository;
         this.dealRepository = dealRepository;
         this.activityRepository = activityRepository;
+        this.dealService = dealService;
     }
 
     public Page<PersonDTO> list(String q,
@@ -321,6 +325,12 @@ public class PersonService {
         r.createdBy = d.getCreatedBy();
         r.createdByUserId = d.getCreatedByUserId();
         r.createdByName = d.getCreatedByName();
+        if (d.getOwner() != null) {
+            r.ownerId = d.getOwner().getId();
+            r.ownerDisplayName = d.getOwner().getDisplayName();
+        } else if (d.getOwnerId() != null) {
+            r.ownerId = d.getOwnerId();
+        }
         return r;
     }
 
@@ -384,6 +394,7 @@ public class PersonService {
             root.fetch("pipeline", jakarta.persistence.criteria.JoinType.LEFT);
             root.fetch("stage", jakarta.persistence.criteria.JoinType.LEFT);
             root.fetch("source", jakarta.persistence.criteria.JoinType.LEFT);
+            root.fetch("owner", jakarta.persistence.criteria.JoinType.LEFT);
             root.fetch("labels", jakarta.persistence.criteria.JoinType.LEFT);
             return cb.and(
                 cb.equal(root.get("person").get("id"), id),
@@ -564,12 +575,12 @@ public class PersonService {
         // - When Person A adds phone number, check if it matches Person B's phone
         // - When Person B adds Instagram ID, check if it matches Person A's Instagram ID
         // - In both cases, we need to detect the duplicate and prompt for merge
+        String currentPhone = entity.getPhone() != null ? entity.getPhone().trim() : "";
+        String newPhone = dto.getPhone() != null ? dto.getPhone().trim() : "";
+        boolean phoneChanged = StringUtils.hasText(newPhone) && !newPhone.equals(currentPhone);
+        boolean phoneAdded = !StringUtils.hasText(currentPhone) && StringUtils.hasText(newPhone);
+
         if (!skipDuplicateCheck) {
-            String currentPhone = entity.getPhone() != null ? entity.getPhone().trim() : "";
-            String newPhone = dto.getPhone() != null ? dto.getPhone().trim() : "";
-            boolean phoneChanged = StringUtils.hasText(newPhone) && !newPhone.equals(currentPhone);
-            boolean phoneAdded = !StringUtils.hasText(currentPhone) && StringUtils.hasText(newPhone);
-            
             String currentInstagramId = entity.getInstagramId() != null ? entity.getInstagramId().trim() : "";
             String newInstagramId = dto.getInstagramId() != null ? dto.getInstagramId().trim() : "";
             boolean instagramIdChanged = StringUtils.hasText(newInstagramId) && !newInstagramId.equals(currentInstagramId);
@@ -623,6 +634,9 @@ public class PersonService {
             entity.setLabel(label);
         }
         Person saved = repository.save(entity);
+        if (phoneChanged || phoneAdded) {
+            dealService.promoteBotDealsWhenPhoneReceived(saved.getId());
+        }
         return PersonMapper.toDto(saved);
     }
 

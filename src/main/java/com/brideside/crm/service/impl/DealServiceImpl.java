@@ -392,6 +392,15 @@ public class DealServiceImpl implements DealService {
             deal.setCreatedByUserId(null);
             deal.setCreatedByName(null);
         }
+
+        resolveAndApplyInitialStage(deal, request.stageId, request.phoneNumber);
+
+        if (deal.getPipeline() != null && deal.getOrganization() == null) {
+            deal.setOrganization(deal.getPipeline().getOrganization());
+        }
+        if (deal.getOwner() == null) {
+            resolveDealOwnerFromPersonOrOrganization(deal);
+        }
         
         Deal savedDeal = dealRepository.save(deal);
         
@@ -683,6 +692,16 @@ public class DealServiceImpl implements DealService {
                 stageChanged = true;
             }
         }
+
+        if (deal.getCreatedBy() == CreatedByType.BOT && deal.getPipeline() != null) {
+            if (request.stageId == null) {
+                stageChanged = maybePromoteBotDealOnPhoneReceived(deal, oldStage) || stageChanged;
+            } else {
+                validateStageBelongsToPipeline(deal.getStage(), deal.getPipeline());
+            }
+        } else if (request.stageId != null && deal.getPipeline() != null) {
+            validateStageBelongsToPipeline(deal.getStage(), deal.getPipeline());
+        }
         
         deal.setUpdatedAt(LocalDateTime.now());
         Deal savedDeal = dealRepository.save(deal);
@@ -735,7 +754,7 @@ public class DealServiceImpl implements DealService {
     @Override
     public List<Deal> list(String sortField, String sortDirection) {
         // Call the new filtered list method with all filters as null, and no pagination (null limit/offset)
-        return list(null, null, null, null, null, null, null, null, null, sortField, sortDirection, null, null, null);
+        return list(null, null, null, null, null, null, null, null, null, sortField, sortDirection, null, null, null, null);
     }
 
     /**
@@ -743,7 +762,8 @@ public class DealServiceImpl implements DealService {
      */
     private Specification<Deal> buildSpecification(Long pipelineId, String status, Long organizationId, 
                                                     Long categoryId, Long managerId, String dateFrom, 
-                                                    String dateTo, String search, String source, Long stageId) {
+                                                    String dateTo, String search, String source, Long stageId,
+                                                    Long personId) {
         // Parse and validate source if provided
         com.brideside.crm.entity.DealSource dealSource = null;
         if (source != null && !source.trim().isEmpty()) {
@@ -762,6 +782,7 @@ public class DealServiceImpl implements DealService {
                 .and(DealSpecifications.hasCategory(categoryId))
                 .and(DealSpecifications.hasManager(managerId))
                 .and(DealSpecifications.hasStage(stageId))
+                .and(DealSpecifications.hasPerson(personId))
                 .and(DealSpecifications.search(search))
                 .and(DealSpecifications.hasSource(dealSource));
 
@@ -791,16 +812,17 @@ public class DealServiceImpl implements DealService {
     @Transactional(readOnly = true)
     public List<Deal> list(Long pipelineId, String status, Long organizationId, Long categoryId,
                            Long managerId, String dateFrom, String dateTo, String search, String source,
-                           String sortField, String sortDirection, Integer limit, Integer offset, Long stageId) {
-        log.debug("Deal list requested with filters: pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}, sort={},{}, limit={}, offset={}", 
-            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId, sortField, sortDirection, limit, offset);
+                           String sortField, String sortDirection, Integer limit, Integer offset, Long stageId,
+                           Long personId) {
+        log.debug("Deal list requested with filters: pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}, personId={}, sort={},{}, limit={}, offset={}", 
+            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId, personId, sortField, sortDirection, limit, offset);
         
         // Build specification with all filters
         Specification<Deal> spec = buildSpecification(pipelineId, status, organizationId, categoryId, 
-                                                       managerId, dateFrom, dateTo, search, source, stageId);
+                                                       managerId, dateFrom, dateTo, search, source, stageId, personId);
         
-        log.debug("Deal list: Applied filters - pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}", 
-            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId);
+        log.debug("Deal list: Applied filters - pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}, personId={}", 
+            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId, personId);
 
         // Load deals with specification.
         // NOTE: Sorting/pagination semantics are implemented in Java to preserve existing behavior.
@@ -937,13 +959,14 @@ public class DealServiceImpl implements DealService {
     @Override
     @Transactional(readOnly = true)
     public long count(Long pipelineId, String status, Long organizationId, Long categoryId,
-                      Long managerId, String dateFrom, String dateTo, String search, String source, Long stageId) {
-        log.debug("Deal count requested with filters: pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}", 
-            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId);
+                      Long managerId, String dateFrom, String dateTo, String search, String source, Long stageId,
+                      Long personId) {
+        log.debug("Deal count requested with filters: pipelineId={}, status={}, organizationId={}, categoryId={}, managerId={}, dateFrom={}, dateTo={}, search={}, source={}, stageId={}, personId={}", 
+            pipelineId, status, organizationId, categoryId, managerId, dateFrom, dateTo, search, source, stageId, personId);
         
         // Build specification with all filters (same as list method)
         Specification<Deal> spec = buildSpecification(pipelineId, status, organizationId, categoryId, 
-                                                       managerId, dateFrom, dateTo, search, source, stageId);
+                                                       managerId, dateFrom, dateTo, search, source, stageId, personId);
         
         // Count deals matching the specification
         long count = dealRepository.count(spec);
@@ -961,7 +984,7 @@ public class DealServiceImpl implements DealService {
         
         // Build specification with all filters (same as count method)
         Specification<Deal> spec = buildSpecification(pipelineId, status, organizationId, categoryId, 
-                                                       managerId, dateFrom, dateTo, search, source, stageId);
+                                                       managerId, dateFrom, dateTo, search, source, stageId, null);
         
         // Calculate sum of deal values using Criteria API
         BigDecimal totalRevenue = calculateSumWithSpecification(spec);
@@ -1099,7 +1122,8 @@ public class DealServiceImpl implements DealService {
                 null,          // sortDirection
                 null,          // limit (no pagination)
                 null,          // offset
-                null           // stageId
+                null,          // stageId
+                null           // personId
         );
 
         Map<Long, DealDtos.UserDealTotals> totalsByUser = new HashMap<>();
@@ -1332,6 +1356,9 @@ public class DealServiceImpl implements DealService {
             }
             if (deal.getDealCategory() != null) {
                 deal.getDealCategory().getName();
+            }
+            if (deal.getOwner() != null) {
+                deal.getOwner().getFirstName();
             }
             if (deal.getReferencedDeal() != null) {
                 deal.getReferencedDeal().getId();
@@ -1636,6 +1663,31 @@ public class DealServiceImpl implements DealService {
             throw new ResourceNotFoundException("Person not found");
         }
         return dealRepository.findByPersonAndIsDeletedFalse(person);
+    }
+
+    @Override
+    @Transactional
+    public void promoteBotDealsWhenPhoneReceived(Long personId) {
+        if (personId == null) {
+            return;
+        }
+        Person person = personRepository.findById(personId).orElse(null);
+        if (person == null || !hasPhoneNumber(person.getPhone())) {
+            return;
+        }
+
+        List<Deal> deals = dealRepository.findByPersonAndIsDeletedFalse(person);
+        for (Deal deal : deals) {
+            if (deal.getCreatedBy() != CreatedByType.BOT || deal.getPipeline() == null) {
+                continue;
+            }
+            Stage oldStage = deal.getStage();
+            if (maybePromoteBotDealOnPhoneReceived(deal, oldStage)) {
+                Deal saved = dealRepository.save(deal);
+                dealStageHistoryService.recordStageEntry(saved, saved.getStage());
+                createQualifiedStageActivities(saved);
+            }
+        }
     }
 
     @Override
@@ -2412,6 +2464,123 @@ public class DealServiceImpl implements DealService {
             return null;
         }
         return s.length() <= 255 ? s : s.substring(0, 255);
+    }
+
+    private void resolveAndApplyInitialStage(Deal deal, Long requestedStageId, String requestPhoneNumber) {
+        Pipeline pipeline = deal.getPipeline();
+        if (pipeline == null) {
+            return;
+        }
+
+        boolean hasPhone = hasPhoneNumber(
+                deal.getContactNumber(),
+                deal.getPhoneNumber(),
+                requestPhoneNumber,
+                deal.getPerson() != null ? deal.getPerson().getPhone() : null);
+
+        if (deal.getCreatedBy() == CreatedByType.BOT) {
+            Stage resolved = resolveStageForPipeline(pipeline, hasPhone);
+            Stage requested = requestedStageId != null
+                    ? stageRepository.findById(requestedStageId).orElse(null)
+                    : deal.getStage();
+            if (requested != null && stageBelongsToPipeline(requested, pipeline) && requested.getId().equals(resolved.getId())) {
+                deal.setStage(requested);
+            } else {
+                if (requestedStageId != null && (requested == null || !stageBelongsToPipeline(requested, pipeline))) {
+                    log.warn("BOT deal: stage {} is invalid for pipeline {} — using {} (hasPhone={})",
+                            requestedStageId, pipeline.getId(), resolved.getName(), hasPhone);
+                }
+                deal.setStage(resolved);
+            }
+            return;
+        }
+
+        if (deal.getStage() == null) {
+            deal.setStage(resolveStageForPipeline(pipeline, hasPhone));
+            return;
+        }
+
+        validateStageBelongsToPipeline(deal.getStage(), pipeline);
+    }
+
+    private Stage resolveStageForPipeline(Pipeline pipeline, boolean hasPhone) {
+        String stageName = hasPhone ? "Qualified" : "Lead In";
+        return stageRepository.findFirstByPipelineAndNameIgnoreCaseAndActiveTrue(pipeline, stageName)
+                .orElseThrow(() -> new BadRequestException(
+                        "Pipeline " + pipeline.getId() + " has no active '" + stageName + "' stage"));
+    }
+
+    private boolean stageBelongsToPipeline(Stage stage, Pipeline pipeline) {
+        if (stage == null || pipeline == null || stage.getPipeline() == null) {
+            return false;
+        }
+        return pipeline.getId().equals(stage.getPipeline().getId());
+    }
+
+    private void validateStageBelongsToPipeline(Stage stage, Pipeline pipeline) {
+        if (stage == null || pipeline == null) {
+            return;
+        }
+        if (!stageBelongsToPipeline(stage, pipeline)) {
+            throw new BadRequestException(
+                    "Stage " + stage.getId() + " does not belong to pipeline " + pipeline.getId());
+        }
+    }
+
+    private boolean hasPhoneNumber(String... values) {
+        if (values == null) {
+            return false;
+        }
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Moves a BOT-created deal from Lead In to Qualified when a phone number is present.
+     *
+     * @return true if the stage was changed
+     */
+    private boolean maybePromoteBotDealOnPhoneReceived(Deal deal, Stage oldStage) {
+        if (deal.getCreatedBy() != CreatedByType.BOT || deal.getPipeline() == null) {
+            return false;
+        }
+        if (!hasPhoneNumber(deal.getContactNumber(), deal.getPhoneNumber(),
+                deal.getPerson() != null ? deal.getPerson().getPhone() : null)) {
+            return false;
+        }
+        if (oldStage != null && !"Lead In".equalsIgnoreCase(oldStage.getName())) {
+            return false;
+        }
+
+        Stage qualified = resolveStageForPipeline(deal.getPipeline(), true);
+        if (deal.getStage() != null && qualified.getId().equals(deal.getStage().getId())) {
+            return false;
+        }
+        deal.setStage(qualified);
+        if (deal.getContactNumber() == null || deal.getContactNumber().isBlank()) {
+            String phone = deal.getPerson() != null ? deal.getPerson().getPhone() : null;
+            if (phone == null || phone.isBlank()) {
+                phone = deal.getPhoneNumber();
+            }
+            if (phone != null && !phone.isBlank()) {
+                deal.setContactNumber(phone.trim());
+            }
+        }
+        return true;
+    }
+
+    private void resolveDealOwnerFromPersonOrOrganization(Deal deal) {
+        if (deal.getPerson() != null && deal.getPerson().getOwner() != null) {
+            deal.setOwner(deal.getPerson().getOwner());
+            return;
+        }
+        if (deal.getOrganization() != null && deal.getOrganization().getOwner() != null) {
+            deal.setOwner(deal.getOrganization().getOwner());
+        }
     }
     
     /**

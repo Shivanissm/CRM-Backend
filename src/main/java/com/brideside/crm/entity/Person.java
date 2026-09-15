@@ -1,6 +1,9 @@
 package com.brideside.crm.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.NotFound;
+import org.hibernate.annotations.NotFoundAction;
+
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -44,7 +47,11 @@ public class Person {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id")
+    @NotFound(action = NotFoundAction.IGNORE)
     private User owner;
+
+    @Column(name = "owner_id", insertable = false, updatable = false)
+    private Long ownerId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id")
@@ -176,6 +183,14 @@ public class Person {
 
     public void setOwner(User owner) {
         this.owner = owner;
+    }
+
+    public Long getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(Long ownerId) {
+        this.ownerId = ownerId;
     }
 
     public Category getCategory() {

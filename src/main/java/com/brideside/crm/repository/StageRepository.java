@@ -13,6 +13,7 @@ public interface StageRepository extends JpaRepository<Stage, Long> {
     boolean existsByPipelineAndNameIgnoreCase(Pipeline pipeline, String name);
     boolean existsByPipelineAndNameIgnoreCaseAndIdNot(Pipeline pipeline, String name, Long id);
     Optional<Stage> findByIdAndPipeline(Long id, Pipeline pipeline);
+    Optional<Stage> findFirstByPipelineAndNameIgnoreCaseAndActiveTrue(Pipeline pipeline, String name);
 }
 
 

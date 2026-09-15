@@ -6,6 +6,7 @@ import com.brideside.crm.entity.ClientData;
 import com.brideside.crm.entity.Organization;
 import com.brideside.crm.entity.OrganizationActivation;
 import com.brideside.crm.entity.OrganizationOnboardingProgress;
+import com.brideside.crm.entity.Pipeline;
 import com.brideside.crm.entity.VendorAsset;
 import com.brideside.crm.entity.VendorData;
 import com.brideside.crm.exception.ResourceNotFoundException;
@@ -90,12 +91,11 @@ public class OrganizationProgressServiceImpl implements OrganizationProgressServ
 
         progressRepository.save(progress);
 
-        // Organization is considered active only when the "core 4" activation checklist fields are done.
-        // This must NOT depend on the 6 onboarding completion flags.
+        // Active when core-4 activation checklist is done, or when bootstrap vendor creds + default pipeline exist.
         boolean coreFourDone = organizationActivationRepository.findByOrganization_Id(organizationId)
                 .map(this::coreFourComplete)
                 .orElse(false);
-        organization.setIsActive(coreFourDone);
+        organization.setIsActive(coreFourDone || hasBootstrapVendorAndPipeline(organizationId));
         organizationRepository.save(organization);
     }
 
@@ -110,11 +110,7 @@ public class OrganizationProgressServiceImpl implements OrganizationProgressServ
         OrganizationOnboardingProgress progress = progressRepository.findByOrganization_Id(organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Progress not found for organization " + organizationId));
 
-        // Organization is active only when the "core 4" activation checklist fields are done.
-        boolean isActive = organizationActivationRepository.findByOrganization_Id(organizationId)
-                .map(this::coreFourComplete)
-                .orElse(false);
-        return toResponse(organization.getId(), progress, isActive);
+        return toResponse(organization.getId(), progress, organization.getIsActive());
     }
 
     @Override
@@ -226,6 +222,24 @@ public class OrganizationProgressServiceImpl implements OrganizationProgressServ
             }
         }
         return true;
+    }
+
+    /**
+     * Bootstrap orgs created via POST /api/organizations get a default brideside vendor (with username)
+     * and default pipeline automatically — treat them as active without waiting for onboarding checklist.
+     */
+    private boolean hasBootstrapVendorAndPipeline(Long organizationId) {
+        List<BridesideVendor> vendors = bridesideVendorRepository.findByOrganization_Id(organizationId);
+        for (BridesideVendor vendor : vendors) {
+            if (!StringUtils.hasText(vendor.getUsername())) {
+                continue;
+            }
+            Pipeline pipeline = vendor.getPipeline();
+            if (pipeline != null && Boolean.FALSE.equals(pipeline.getDeleted())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private OrganizationProgressDtos.ProgressResponse toResponse(Long orgId, OrganizationOnboardingProgress p, Boolean isActive) {

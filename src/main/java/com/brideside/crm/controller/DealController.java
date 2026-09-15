@@ -51,12 +51,14 @@ public class DealController {
 
     @GetMapping
     @Operation(summary = "List deals", description = "List deals with optional filters, sorting, and pagination. " +
-            "Filters: pipelineId, status (IN_PROGRESS/WON/LOST/all), organizationId, categoryId, managerId, stageId, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD), search (name/venue/person/organization), source (Direct/Divert/Reference/Planner/TBS). " +
+            "Filters: pipelineId, personId, status (IN_PROGRESS/WON/LOST/all), organizationId, categoryId, managerId, stageId, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD), search (name/venue/person/organization), source (Direct/Divert/Reference/Planner/TBS). " +
             "Sort: 'field,direction' (e.g., 'name,asc' or 'value,desc'). Default: 'nextActivity,asc'. " +
             "Pagination: limit (default: 100), offset (default: 0). " +
-            "Returns paginated deals list and totalCount based on applied filters.")
-    public ResponseEntity<DealDtos.ListResponse> list(
+            "Response: by default returns a JSON array of deals (legacy). Pass wrapped=true for {deals, totalCount, persons, activities}. " +
+            "X-Total-Count header is always set.")
+    public ResponseEntity<?> list(
             @RequestParam(required = false) Long pipelineId,
+            @RequestParam(required = false) Long personId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long organizationId,
             @RequestParam(required = false) Long categoryId,
@@ -68,10 +70,14 @@ public class DealController {
             @RequestParam(required = false) String source,
             @RequestParam(required = false, defaultValue = "nextActivity,asc") String sort,
             @RequestParam(required = false) Integer limit,
-            @RequestParam(required = false) Integer offset) {
+            @RequestParam(required = false) Integer offset,
+            @RequestParam(required = false, defaultValue = "false") boolean wrapped) {
         
         // Validate numeric parameters
         if (pipelineId != null && pipelineId <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (personId != null && personId <= 0) {
             return ResponseEntity.badRequest().build();
         }
         if (organizationId != null && organizationId <= 0) {
@@ -124,7 +130,7 @@ public class DealController {
         // Get deals list with pagination
         List<Deal> dealEntities = dealService.list(
                 pipelineId, status, organizationId, categoryId, managerId,
-                dateFrom, dateTo, search, source, sortField, sortDirection, limit, offset, stageId
+                dateFrom, dateTo, search, source, sortField, sortDirection, limit, offset, stageId, personId
         );
         
         List<DealResponse> deals = dealEntities.stream()
@@ -134,20 +140,25 @@ public class DealController {
         // Get total count with same filters (before pagination)
         long totalCount = dealService.count(
                 pipelineId, status, organizationId, categoryId, managerId,
-                dateFrom, dateTo, search, source, stageId
+                dateFrom, dateTo, search, source, stageId, personId
         );
         
-        // Extract deal IDs from loaded deals
-        List<Long> dealIds = dealEntities.stream()
-            .map(Deal::getId)
-            .collect(Collectors.toList());
-        
-        // Fetch persons and activities for these deals using JOINs
-        List<PersonDTO> persons = dealService.getPersonsByDealIds(dealIds);
-        List<ActivityDTO> activities = dealService.getActivitiesByDealIds(dealIds);
-        
-        DealDtos.ListResponse response = new DealDtos.ListResponse(deals, totalCount, persons, activities);
-        return ResponseEntity.ok(response);
+        if (wrapped) {
+            List<Long> dealIds = dealEntities.stream()
+                .map(Deal::getId)
+                .collect(Collectors.toList());
+            List<PersonDTO> persons = dealService.getPersonsByDealIds(dealIds);
+            List<ActivityDTO> activities = dealService.getActivitiesByDealIds(dealIds);
+            DealDtos.ListResponse response = new DealDtos.ListResponse(deals, totalCount, persons, activities);
+            return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(totalCount))
+                .body(response);
+        }
+
+        // Legacy/default: return plain array — existing frontend expects DealResponse[]
+        return ResponseEntity.ok()
+            .header("X-Total-Count", String.valueOf(totalCount))
+            .body(deals);
     }
 
     @GetMapping("/won")

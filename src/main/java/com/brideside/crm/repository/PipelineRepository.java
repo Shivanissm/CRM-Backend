@@ -28,6 +28,20 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     // Pipelines assigned to teams with given IDs
     @Query("SELECT p FROM Pipeline p WHERE p.deleted = false AND p.team IS NOT NULL AND p.team.id IN :teamIds ORDER BY p.name ASC")
     List<Pipeline> findByDeletedFalseAndTeam_IdInOrderByNameAsc(@Param("teamIds") List<Long> teamIds);
+
+    // Bootstrap pipelines auto-created with org/vendor before a team is assigned
+    @Query("SELECT p FROM Pipeline p WHERE p.deleted = false AND p.team IS NULL ORDER BY p.name ASC")
+    List<Pipeline> findByDeletedFalseAndTeamIsNullOrderByNameAsc();
+
+    // Pipelines for organizations owned by accessible users (bootstrap/default org pipelines)
+    @Query("""
+            SELECT p FROM Pipeline p
+            JOIN p.organization o
+            WHERE p.deleted = false
+              AND o.owner.id IN :ownerIds
+            ORDER BY p.name ASC
+            """)
+    List<Pipeline> findByDeletedFalseAndOrganizationOwnerIdInOrderByNameAsc(@Param("ownerIds") List<Long> ownerIds);
     
     // Pipelines with a specific category
     @Query("SELECT p FROM Pipeline p WHERE p.deleted = false AND p.category = :category ORDER BY p.name ASC")
