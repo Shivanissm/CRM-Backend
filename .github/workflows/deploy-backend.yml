@@ -1,0 +1,41 @@
+name: Deploy CRM Backend to AWS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, backend]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Java and Maven
+        run: |
+          java -version
+          mvn -version
+
+      - name: Build backend
+        run: |
+          mvn clean package -DskipTests
+
+      - name: Deploy JAR
+        run: |
+          cp target/brideside-crm-backend-1.0.0.jar /opt/crm-instagram-backend/target/brideside-crm-backend-1.0.0.jar
+
+      - name: Restart CRM Backend
+        run: |
+          sudo systemctl restart crm-backend.service
+
+      - name: Verify backend
+        run: |
+          sleep 10
+          sudo systemctl is-active --quiet crm-backend.service
+          echo "CRM Backend deployed successfully"
