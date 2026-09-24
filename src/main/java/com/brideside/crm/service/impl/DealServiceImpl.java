@@ -292,6 +292,12 @@ public class DealServiceImpl implements DealService {
             }
             
             deal.setReferencedDeal(referencedDeal);
+
+            // Divert dialog only sends the target pipeline(s), not a name.
+            // Inherit the name from the source deal so the NOT NULL constraint on deals.name is satisfied.
+            if (deal.getName() == null || deal.getName().trim().isEmpty()) {
+                deal.setName(referencedDeal.getName());
+            }
             
             // Set the referenced pipeline to the original pipeline (traverse up the chain if needed)
             Pipeline originalPipeline = getOriginalPipeline(referencedDeal);
@@ -398,6 +404,16 @@ public class DealServiceImpl implements DealService {
         if (deal.getPipeline() != null && deal.getOrganization() == null) {
             deal.setOrganization(deal.getPipeline().getOrganization());
         }
+
+        // Deal owner follows the pipeline's team manager.
+        // - Diverted deals always adopt the target pipeline's team manager.
+        // - New deals default to the pipeline's team manager when no owner was explicitly chosen.
+        boolean divertedDeal = Boolean.TRUE.equals(deal.getIsDiverted()) || request.referencedDealId != null;
+        User pipelineTeamManager = resolvePipelineTeamManager(deal);
+        if (pipelineTeamManager != null && (divertedDeal || deal.getOwner() == null)) {
+            deal.setOwner(pipelineTeamManager);
+        }
+
         if (deal.getOwner() == null) {
             resolveDealOwnerFromPersonOrOrganization(deal);
         }
@@ -2181,9 +2197,15 @@ public class DealServiceImpl implements DealService {
         deal.setPipeline(tbsPipeline);
         deal.setStage(qualifiedStage);
         deal.setOrganization(tbsOrganization);
-        User orgOwner = tbsOrganization.getOwner();
-        if (orgOwner != null) {
-            deal.setOwner(orgOwner);
+        // Owner = team manager of the target (Brideside) pipeline; fall back to the org owner.
+        User targetPipelineManager = (tbsPipeline.getTeam() != null) ? tbsPipeline.getTeam().getManager() : null;
+        if (targetPipelineManager != null) {
+            deal.setOwner(targetPipelineManager);
+        } else {
+            User orgOwner = tbsOrganization.getOwner();
+            if (orgOwner != null) {
+                deal.setOwner(orgOwner);
+            }
         }
         deal.setSource(source.getSource());
         // deals.category_id — Brideside pipeline copy uses configured category (default 4), not the source deal's category
@@ -2581,6 +2603,21 @@ public class DealServiceImpl implements DealService {
         if (deal.getOrganization() != null && deal.getOrganization().getOwner() != null) {
             deal.setOwner(deal.getOrganization().getOwner());
         }
+    }
+
+    /**
+     * Returns the team manager for the deal's pipeline, or null if the pipeline
+     * has no team or the team has no manager.
+     */
+    private User resolvePipelineTeamManager(Deal deal) {
+        if (deal == null || deal.getPipeline() == null) {
+            return null;
+        }
+        var team = deal.getPipeline().getTeam();
+        if (team == null) {
+            return null;
+        }
+        return team.getManager();
     }
     
     /**
