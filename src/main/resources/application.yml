@@ -68,8 +68,8 @@ app:
   invitation-token-validity: 604800000 # 7 days in milliseconds
   password-reset-token-validity: 24 # 24 hours
   email:
-    from: ${MAIL_FROM:shubham@acceltancy.in}
-    from-name: ${MAIL_FROM_NAME:Brideside CRM}
+    from: ${MAIL_FROM:tech@houseofbarqat.in}
+    from-name: ${MAIL_FROM_NAME:House of Barqat CRM}
   tbs:
     # The Bride Side (Brideside) pipeline & org for auto-diverted deal copies
     brideside-pipeline-id: ${TBS_BRIDESIDE_PIPELINE_ID:67}

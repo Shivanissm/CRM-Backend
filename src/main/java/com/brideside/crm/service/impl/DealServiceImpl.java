@@ -37,6 +37,7 @@ import org.springframework.data.jpa.domain.Specification;
 import com.brideside.crm.service.DealService;
 import com.brideside.crm.service.DealStageHistoryService;
 import com.brideside.crm.service.LabelService;
+import com.brideside.crm.service.PipelineService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -99,6 +100,8 @@ public class DealServiceImpl implements DealService {
     private LabelService labelService;
     @Autowired
     private LabelRepository labelRepository;
+    @Autowired
+    private PipelineService pipelineService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -757,6 +760,7 @@ public class DealServiceImpl implements DealService {
         if (deal.getIsDeleted() != null && deal.getIsDeleted()) {
             throw new ResourceNotFoundException("Deal not found");
         }
+        assertDealVisibleToCurrentUser(deal);
         // Ensure API-required relationships are initialized within a transaction
         initializeForApi(List.of(deal));
         return deal;
@@ -820,6 +824,7 @@ public class DealServiceImpl implements DealService {
             }
         }
         spec = spec.and(DealSpecifications.createdBetween(fromDate, toDate));
+        spec = spec.and(visiblePipelineRestriction());
         
         return spec;
     }
@@ -1662,12 +1667,12 @@ public class DealServiceImpl implements DealService {
 
     @Override
     public List<Deal> listWon() { 
-        return dealRepository.findByStatusAndIsDeletedFalse(DealStatus.WON); 
+        return restrictDealsToVisiblePipelines(dealRepository.findByStatusAndIsDeletedFalse(DealStatus.WON));
     }
 
     @Override
     public List<Deal> listByStatus(DealStatus status) { 
-        return dealRepository.findByStatusAndIsDeletedFalse(status); 
+        return restrictDealsToVisiblePipelines(dealRepository.findByStatusAndIsDeletedFalse(status));
     }
 
     @Override
@@ -1678,7 +1683,7 @@ public class DealServiceImpl implements DealService {
         if (Boolean.TRUE.equals(person.getIsDeleted())) {
             throw new ResourceNotFoundException("Person not found");
         }
-        return dealRepository.findByPersonAndIsDeletedFalse(person);
+        return restrictDealsToVisiblePipelines(dealRepository.findByPersonAndIsDeletedFalse(person));
     }
 
     @Override
@@ -1710,14 +1715,14 @@ public class DealServiceImpl implements DealService {
     public List<Deal> listByOrganization(Long organizationId) {
         Organization organization = organizationRepository.findById(organizationId)
             .orElseThrow(() -> new ResourceNotFoundException("Organization not found"));
-        return dealRepository.findByOrganizationAndIsDeletedFalse(organization);
+        return restrictDealsToVisiblePipelines(dealRepository.findByOrganizationAndIsDeletedFalse(organization));
     }
 
     @Override
     public List<Deal> listByCategory(Long categoryId) {
         Category category = categoryRepository.findById(categoryId)
             .orElseThrow(() -> new ResourceNotFoundException("Category not found"));
-        return dealRepository.findByDealCategoryAndIsDeletedFalse(category);
+        return restrictDealsToVisiblePipelines(dealRepository.findByDealCategoryAndIsDeletedFalse(category));
     }
 
     @Override
@@ -2302,8 +2307,12 @@ public class DealServiceImpl implements DealService {
             }
         }
         
-        // Get all active pipelines
+        // Get pipelines the current user is allowed to see (Sales/Pre-Sales: team-linked only)
         List<Pipeline> allPipelines = pipelineRepository.findByDeletedFalseOrderByNameAsc();
+        Set<Long> visiblePipelineIds = pipelineService.getVisiblePipelineIds();
+        allPipelines = allPipelines.stream()
+                .filter(pipeline -> pipeline.getId() != null && visiblePipelineIds.contains(pipeline.getId()))
+                .collect(Collectors.toList());
         
         // Get all deals in the diversion chain (current deal + all deals it references)
         List<Deal> dealsInChain = getAllDealsInChain(deal);
@@ -2618,6 +2627,61 @@ public class DealServiceImpl implements DealService {
             return null;
         }
         return team.getManager();
+    }
+
+    private boolean shouldRestrictDealsToTeamPipelines() {
+        Optional<User> currentUserOpt = getCurrentUserOptional();
+        if (currentUserOpt.isEmpty() || currentUserOpt.get().getRole() == null) {
+            return false;
+        }
+        Role.RoleName roleName = currentUserOpt.get().getRole().getName();
+        return roleName == Role.RoleName.SALES || roleName == Role.RoleName.PRESALES;
+    }
+
+    private Specification<Deal> visiblePipelineRestriction() {
+        if (!shouldRestrictDealsToTeamPipelines()) {
+            return null;
+        }
+        return DealSpecifications.hasPipelineIn(pipelineService.getVisiblePipelineIds());
+    }
+
+    private void assertDealVisibleToCurrentUser(Deal deal) {
+        if (!shouldRestrictDealsToTeamPipelines()) {
+            return;
+        }
+        Long pipelineId = deal.getPipelineId();
+        if (pipelineId == null && deal.getPipeline() != null) {
+            pipelineId = deal.getPipeline().getId();
+        }
+        Set<Long> visiblePipelineIds = pipelineService.getVisiblePipelineIds();
+        if (pipelineId == null || !visiblePipelineIds.contains(pipelineId)) {
+            throw new ResourceNotFoundException("Deal not found");
+        }
+    }
+
+    private List<Deal> restrictDealsToVisiblePipelines(List<Deal> deals) {
+        if (deals == null || deals.isEmpty() || !shouldRestrictDealsToTeamPipelines()) {
+            return deals;
+        }
+        Set<Long> visiblePipelineIds = pipelineService.getVisiblePipelineIds();
+        return deals.stream()
+                .filter(deal -> {
+                    Long pipelineId = deal.getPipelineId();
+                    if (pipelineId == null && deal.getPipeline() != null) {
+                        pipelineId = deal.getPipeline().getId();
+                    }
+                    return pipelineId != null && visiblePipelineIds.contains(pipelineId);
+                })
+                .collect(Collectors.toList());
+    }
+
+    private Optional<User> getCurrentUserOptional() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof UserDetails)) {
+            return Optional.empty();
+        }
+        String email = ((UserDetails) authentication.getPrincipal()).getUsername();
+        return userRepository.findByEmail(email);
     }
     
     /**
