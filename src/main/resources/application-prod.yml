@@ -7,6 +7,11 @@ spring:
         use_sql_comments: false
         default_batch_fetch_size: 50
 
+app:
+  email:
+    from: ${MAIL_FROM:tech@houseofbarqat.in}
+    from-name: ${MAIL_FROM_NAME:House of Barqat CRM}
+
 logging:
   level:
     com.brideside.crm: INFO

@@ -14,6 +14,7 @@ import com.brideside.crm.repository.DealSpecifications;
 import com.brideside.crm.repository.PersonRepository;
 import com.brideside.crm.repository.PersonSpecifications;
 import com.brideside.crm.repository.UserRepository;
+import com.brideside.crm.service.PipelineService;
 import com.brideside.crm.service.SearchService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,14 +43,17 @@ public class SearchServiceImpl implements SearchService {
     private final PersonRepository personRepository;
     private final DealRepository dealRepository;
     private final UserRepository userRepository;
+    private final PipelineService pipelineService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     public SearchServiceImpl(PersonRepository personRepository,
                             DealRepository dealRepository,
-                            UserRepository userRepository) {
+                            UserRepository userRepository,
+                            PipelineService pipelineService) {
         this.personRepository = personRepository;
         this.dealRepository = dealRepository;
         this.userRepository = userRepository;
+        this.pipelineService = pipelineService;
     }
     
     @Override
@@ -74,15 +78,24 @@ public class SearchServiceImpl implements SearchService {
         
         log.debug("Found {} persons matching query '{}' (unrestricted by role)", persons.size(), query);
         
-        // Deals: RBAC — filter by organization owner OR person owner (unchanged)
-        List<Long> accessibleOwnerIds = getAccessibleOwnerIds();
-        log.debug("Deal RBAC: accessible owner IDs: {}", accessibleOwnerIds);
-        
         Specification<Deal> dealSpec = Specification.where(DealSpecifications.notDeleted())
                 .and(DealSpecifications.focusedSearch(query));
-        
-        if (accessibleOwnerIds != null) {
-            dealSpec = dealSpec.and(DealSpecifications.hasOrganizationOrPersonOwnerIn(accessibleOwnerIds));
+
+        Optional<User> currentUserOpt = getCurrentUser();
+        Role.RoleName roleName = (currentUserOpt.isPresent() && currentUserOpt.get().getRole() != null)
+                ? currentUserOpt.get().getRole().getName()
+                : null;
+
+        if (roleName == Role.RoleName.SALES || roleName == Role.RoleName.PRESALES) {
+            Set<Long> visiblePipelineIds = pipelineService.getVisiblePipelineIds();
+            dealSpec = dealSpec.and(DealSpecifications.hasPipelineIn(visiblePipelineIds));
+            log.debug("Deal search restricted to team pipelines: {}", visiblePipelineIds);
+        } else {
+            List<Long> accessibleOwnerIds = getAccessibleOwnerIds();
+            log.debug("Deal RBAC: accessible owner IDs: {}", accessibleOwnerIds);
+            if (accessibleOwnerIds != null) {
+                dealSpec = dealSpec.and(DealSpecifications.hasOrganizationOrPersonOwnerIn(accessibleOwnerIds));
+            }
         }
         
         List<Deal> dealEntities = dealRepository.findAll(dealSpec, pageable).getContent();

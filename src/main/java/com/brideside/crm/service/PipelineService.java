@@ -14,6 +14,10 @@ public interface PipelineService {
     PipelineDtos.PipelineResponse createPipelineForBootstrap(PipelineDtos.PipelineRequest request);
     List<PipelineDtos.PipelineResponse> listPipelines(boolean includeStages);
     List<PipelineDtos.PipelineResponse> listArchivedPipelines(boolean includeStages);
+    /**
+     * Active pipeline IDs the current user is allowed to see (same rules as listPipelines).
+     */
+    java.util.Set<Long> getVisiblePipelineIds();
     PipelineDtos.PipelineResponse getPipeline(Long pipelineId, boolean includeStages);
     PipelineDtos.PipelineResponse updatePipeline(Long pipelineId, PipelineDtos.PipelineUpdateRequest request);
     PipelineDtos.PipelineResponse unarchivePipeline(Long pipelineId, boolean includeStages);

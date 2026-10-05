@@ -115,6 +115,15 @@ public class PipelineServiceImpl implements PipelineService {
 
     @Override
     @Transactional(readOnly = true)
+    public Set<Long> getVisiblePipelineIds() {
+        return getFilteredPipelines().stream()
+                .map(Pipeline::getId)
+                .filter(id -> id != null)
+                .collect(Collectors.toCollection(HashSet::new));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<PipelineDtos.PipelineResponse> listArchivedPipelines(boolean includeStages) {
         List<Pipeline> pipelines = pipelineRepository.findByDeletedTrueOrderByNameAsc();
 
@@ -135,6 +144,9 @@ public class PipelineServiceImpl implements PipelineService {
     @Transactional(readOnly = true)
     public PipelineDtos.PipelineResponse getPipeline(Long pipelineId, boolean includeStages) {
         Pipeline pipeline = requireActivePipeline(pipelineId);
+        if (!getVisiblePipelineIds().contains(pipeline.getId())) {
+            throw new ResourceNotFoundException("Pipeline not found with id " + pipelineId);
+        }
         List<Stage> stages = includeStages
                 ? stageRepository.findByPipelineOrderByOrderIndexAsc(pipeline)
                 : Collections.emptyList();
@@ -482,10 +494,13 @@ public class PipelineServiceImpl implements PipelineService {
     }
 
     /**
-     * Get filtered pipelines based on the current user's role
+     * Get filtered pipelines based on the current user's role.
      * Visibility rules:
-     * 1. Admin: Sees all default/bootstrap pipelines (team assigned later by admin)
-     * 2. Other roles: team-linked pipelines, unassigned bootstrap pipelines, and org-owned pipelines
+     * 1. Admin: all pipelines.
+     * 2. Sales / Pre-Sales: only pipelines assigned to a team they manage or belong to.
+     *    Pipelines with no team are hidden.
+     * 3. Category Manager: team-linked pipelines of their Sales reports, plus unassigned
+     *    bootstrap pipelines and org-owned pipelines in their hierarchy.
      */
     private List<Pipeline> getFilteredPipelines() {
         Optional<User> currentUserOpt = getCurrentUser();
@@ -511,6 +526,13 @@ public class PipelineServiceImpl implements PipelineService {
             for (Pipeline pipeline : pipelineRepository.findByDeletedFalseAndTeam_IdInOrderByNameAsc(new ArrayList<>(allowedTeamIds))) {
                 visible.put(pipeline.getId(), pipeline);
             }
+        }
+
+        // Sales and Pre-Sales only see pipelines linked to their teams.
+        if (roleName == Role.RoleName.SALES || roleName == Role.RoleName.PRESALES) {
+            return visible.values().stream()
+                    .sorted(Comparator.comparing(Pipeline::getName, String.CASE_INSENSITIVE_ORDER))
+                    .collect(Collectors.toList());
         }
 
         // Org bootstrap pipelines are created without a team — include them until a team is assigned manually.
@@ -656,26 +678,28 @@ public class PipelineServiceImpl implements PipelineService {
                     }
                 }
             }
-        } else if (roleName == Role.RoleName.SALES) {
-            // Sales Manager: Find teams where they are the team manager
-            List<Team> teams = teamRepository.findByManager_Id(currentUser.getId());
-            for (Team team : teams) {
-                if (team.getId() != null) {
-                    teamIds.add(team.getId());
-                }
-            }
-        } else if (roleName == Role.RoleName.PRESALES) {
-            // Pre-Sales: Find teams where they are members
-            // With multiple team membership enabled, they see pipelines for all teams they belong to
-            List<Team> teams = teamRepository.findByMembers_Id(currentUser.getId());
-            for (Team team : teams) {
-                if (team.getId() != null) {
-                    teamIds.add(team.getId());
-                }
-            }
+        } else if (roleName == Role.RoleName.SALES || roleName == Role.RoleName.PRESALES) {
+            // Sales / Pre-Sales: pipelines of every team they manage or belong to
+            addTeamsWhereUserIsManagerOrMember(teamIds, currentUser.getId());
         }
 
         return teamIds;
+    }
+
+    private void addTeamsWhereUserIsManagerOrMember(Set<Long> teamIds, Long userId) {
+        if (userId == null) {
+            return;
+        }
+        addTeamIds(teamIds, teamRepository.findByManager_Id(userId));
+        addTeamIds(teamIds, teamRepository.findByMembers_Id(userId));
+    }
+
+    private void addTeamIds(Set<Long> teamIds, List<Team> teams) {
+        for (Team team : teams) {
+            if (team != null && team.getId() != null) {
+                teamIds.add(team.getId());
+            }
+        }
     }
 }
 

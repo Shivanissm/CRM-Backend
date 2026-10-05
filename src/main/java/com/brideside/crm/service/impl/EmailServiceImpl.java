@@ -23,10 +23,10 @@ public class EmailServiceImpl implements EmailService {
     @Autowired
     private JavaMailSender mailSender;
 
-    @Value("${app.email.from:shubhamlohra35@gmail.com}")
+    @Value("${app.email.from:tech@houseofbarqat.in}")
     private String fromEmail;
 
-    @Value("${app.email.from-name:Brideside CRM}")
+    @Value("${app.email.from-name:House of Barqat CRM}")
     private String fromName;
 
     @Value("${app.frontend.base-url:http://localhost:3000}")
@@ -43,7 +43,7 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public void sendInvitationEmail(User user, String token) {
-        String subject = "Welcome to Brideside CRM - Complete Your Registration";
+        String subject = "Welcome to Houseofbarqat CRM - Complete Your Registration";
         String body = buildInvitationEmailBody(user, token);
 
         sendEmail(user.getEmail(), subject, body, false);
@@ -51,7 +51,7 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public void sendPasswordResetEmail(User user, String token) {
-        String subject = "Brideside CRM - Password Reset Request";
+        String subject = "Houseofbarqat CRM - Password Reset Request";
         String body = buildPasswordResetEmailBody(user, token);
 
         sendEmail(user.getEmail(), subject, body, false);
@@ -171,7 +171,7 @@ public class EmailServiceImpl implements EmailService {
         String loginLink = buildFrontendLink(loginPath, null);
         
         return "Dear " + user.getFirstName() + " " + user.getLastName() + ",\n\n" +
-                "You have been invited to join Brideside CRM.\n\n" +
+                "You have been invited to join Houseofbarqat CRM.\n\n" +
                 "Please click on the link below to accept the invitation and set your password:\n" +
                 invitationLink + "\n\n" +
                 "Once your password is set, you can log in here:\n" +
@@ -179,7 +179,7 @@ public class EmailServiceImpl implements EmailService {
                 "This link will expire in 7 days.\n\n" +
                 "If you did not request this invitation, please ignore this email.\n\n" +
                 "Best regards,\n" +
-                "Brideside CRM Team";
+                "Houseofbarqat CRM Team";
     }
 
     private String buildPasswordResetEmailBody(User user, String token) {
@@ -187,7 +187,7 @@ public class EmailServiceImpl implements EmailService {
         String loginLink = buildFrontendLink(loginPath, null);
         
         return "Dear " + user.getFirstName() + " " + user.getLastName() + ",\n\n" +
-                "We received a request to reset your password for your Brideside CRM account.\n\n" +
+                "We received a request to reset your password for your Houseofbarqat CRM account.\n\n" +
                 "Please click on the link below to reset your password:\n" +
                 resetLink + "\n\n" +
                 "After resetting, you can log in here:\n" +
@@ -195,7 +195,7 @@ public class EmailServiceImpl implements EmailService {
                 "This link will expire in 24 hours.\n\n" +
                 "If you did not request a password reset, please ignore this email. Your password will remain unchanged.\n\n" +
                 "Best regards,\n" +
-                "Brideside CRM Team";
+                "Houseofbarqat CRM Team";
     }
 
     private String buildFrontendLink(String path, String token) {

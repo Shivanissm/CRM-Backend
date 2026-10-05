@@ -273,25 +273,20 @@ public class CategoryServiceImpl implements CategoryService {
                     }
                 }
             }
-        } else if (roleName == Role.RoleName.SALES) {
-            // Sales Manager: Find teams where they are the team manager
-            List<Team> teams = teamRepository.findByManager_Id(currentUser.getId());
-            for (Team team : teams) {
-                if (team.getId() != null) {
-                    teamIds.add(team.getId());
-                }
-            }
-        } else if (roleName == Role.RoleName.PRESALES) {
-            // Pre-Sales: Find teams where they are members
-            List<Team> teams = teamRepository.findByMembers_Id(currentUser.getId());
-            for (Team team : teams) {
-                if (team.getId() != null) {
-                    teamIds.add(team.getId());
-                }
-            }
+        } else if (roleName == Role.RoleName.SALES || roleName == Role.RoleName.PRESALES) {
+            addTeamIds(teamIds, teamRepository.findByManager_Id(currentUser.getId()));
+            addTeamIds(teamIds, teamRepository.findByMembers_Id(currentUser.getId()));
         }
 
         return teamIds;
+    }
+
+    private void addTeamIds(Set<Long> teamIds, List<Team> teams) {
+        for (Team team : teams) {
+            if (team != null && team.getId() != null) {
+                teamIds.add(team.getId());
+            }
+        }
     }
 
     /**

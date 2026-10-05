@@ -9,6 +9,7 @@ import jakarta.persistence.criteria.JoinType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Collection;
 import java.util.List;
 
 public final class DealSpecifications {
@@ -36,6 +37,20 @@ public final class DealSpecifications {
         }
         return (root, query, cb) -> 
             cb.equal(root.get("pipelineId"), pipelineId);
+    }
+
+    /**
+     * Restrict deals to these pipeline IDs. Empty collection matches nothing.
+     * Null means no extra pipeline restriction.
+     */
+    public static Specification<Deal> hasPipelineIn(Collection<Long> pipelineIds) {
+        if (pipelineIds == null) {
+            return null;
+        }
+        if (pipelineIds.isEmpty()) {
+            return (root, query, cb) -> cb.disjunction();
+        }
+        return (root, query, cb) -> root.get("pipelineId").in(pipelineIds);
     }
 
     /**
