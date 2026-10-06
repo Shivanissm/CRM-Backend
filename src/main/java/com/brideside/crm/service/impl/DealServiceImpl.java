@@ -1791,15 +1791,18 @@ public class DealServiceImpl implements DealService {
                     ". Allowed values: Slot not opened, Not Interested, Date postponed, Not Available, Ghosted, Budget, Booked Someone else");
             }
             deal.setLostReason(lostReason);
-            
-            // If lost reason is Budget, require clientBudget
+
             if (lostReason == DealLostReason.BUDGET) {
-                if (request.clientBudget == null || request.clientBudget.compareTo(BigDecimal.ZERO) <= 0) {
-                    throw new BadRequestException("clientBudget is required and must be greater than 0 when lost reason is Budget. Please provide the client's budget amount.");
+                // Prefer an explicit clientBudget; otherwise reuse the deal value already on the deal.
+                if (request.clientBudget != null && request.clientBudget.compareTo(BigDecimal.ZERO) > 0) {
+                    deal.setClientBudget(request.clientBudget);
+                } else if (deal.getClientBudget() == null || deal.getClientBudget().compareTo(BigDecimal.ZERO) <= 0) {
+                    BigDecimal dealValue = deal.getValue();
+                    if (dealValue != null && dealValue.compareTo(BigDecimal.ZERO) > 0) {
+                        deal.setClientBudget(dealValue);
+                    }
                 }
-                deal.setClientBudget(request.clientBudget);
             } else {
-                // Clear clientBudget when lost reason is not Budget
                 deal.setClientBudget(null);
             }
             
