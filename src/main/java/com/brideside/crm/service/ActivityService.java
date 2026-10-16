@@ -42,14 +42,17 @@ import java.time.Instant;
 public class ActivityService {
     private final ActivityRepository repository;
     private final ActivityScopeService scopeService;
+    private final com.brideside.crm.repository.DealRepository dealRepository;
     
     @PersistenceContext
     private EntityManager entityManager;
 
     public ActivityService(ActivityRepository repository,
-                           ActivityScopeService scopeService) {
+                           ActivityScopeService scopeService,
+                           com.brideside.crm.repository.DealRepository dealRepository) {
         this.repository = repository;
         this.scopeService = scopeService;
+        this.dealRepository = dealRepository;
     }
 
     @Transactional
@@ -76,6 +79,28 @@ public class ActivityService {
         ActivityMapper.updateEntityForCreate(dto, e);
         // Ensure done defaults to false (entity default, but explicit for clarity)
         e.setDone(false);
+
+        // Default assignee for deal-linked activities:
+        // If the activity is linked to a deal but no assignee was provided (e.g. the
+        // frontend could not resolve the team manager's user object because the
+        // current user's visible-users list is restricted, as happens for PRESALES),
+        // fall back to the deal's owner (which is the pipeline team manager).
+        // This keeps activity assignment consistent across all roles.
+        if (e.getDealId() != null && e.getAssignedUserId() == null) {
+            dealRepository.findById(e.getDealId()).ifPresent(deal -> {
+                com.brideside.crm.entity.User owner = deal.getOwner();
+                if (owner != null) {
+                    e.setAssignedUserId(owner.getId());
+                    // Overwrite the display string when it's missing or the literal
+                    // "Unassigned" placeholder the frontend sends when it cannot
+                    // resolve the user (e.g. PRESALES with a restricted users list).
+                    String current = e.getAssignedUser();
+                    if (current == null || current.isBlank() || current.trim().equalsIgnoreCase("Unassigned")) {
+                        e.setAssignedUser(resolveUserDisplayName(owner));
+                    }
+                }
+            });
+        }
         try {
             return ActivityMapper.toDto(repository.save(e));
         } catch (Exception ex) {
@@ -1398,6 +1423,20 @@ public class ActivityService {
 
     public Optional<ActivityDTO> get(Long id) {
         return repository.findById(id).map(ActivityMapper::toDto);
+    }
+
+    /**
+     * Build a display string for an activity's assigned user.
+     * Prefers "First Last", falling back to email, then id.
+     */
+    private String resolveUserDisplayName(com.brideside.crm.entity.User user) {
+        if (user == null) return null;
+        String first = user.getFirstName() != null ? user.getFirstName().trim() : "";
+        String last = user.getLastName() != null ? user.getLastName().trim() : "";
+        String fullName = (first + " " + last).trim();
+        if (!fullName.isEmpty()) return fullName;
+        if (user.getEmail() != null && !user.getEmail().isBlank()) return user.getEmail();
+        return user.getId() != null ? String.valueOf(user.getId()) : null;
     }
 }
 
