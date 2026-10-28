@@ -12,6 +12,8 @@ import java.util.List;
 public interface ActivityRepository extends JpaRepository<Activity, Long>, JpaSpecificationExecutor<Activity> {
     List<Activity> findByAssignedUserId(Long assignedUserId);
 
+    List<Activity> findByDealId(Long dealId);
+
     /** Open activities for a deal (done flag false). */
     List<Activity> findByDealIdAndDoneFalse(Long dealId);
     

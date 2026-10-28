@@ -428,10 +428,7 @@ public class DealServiceImpl implements DealService {
             dealStageHistoryService.recordStageEntry(savedDeal, savedDeal.getStage());
         }
         
-        // Create activities ONLY if created by BOT and in Qualified stage
-        // Frontend will handle activity creation for USER-created deals
-        if (savedDeal.getCreatedBy() == CreatedByType.BOT && savedDeal.getStage() != null 
-            && "Qualified".equalsIgnoreCase(savedDeal.getStage().getName())) {
+        if (savedDeal.getStage() != null && "Qualified".equalsIgnoreCase(savedDeal.getStage().getName())) {
             createQualifiedStageActivities(savedDeal);
         }
         
@@ -712,14 +709,11 @@ public class DealServiceImpl implements DealService {
             }
         }
 
-        if (deal.getCreatedBy() == CreatedByType.BOT && deal.getPipeline() != null) {
-            if (request.stageId == null) {
-                stageChanged = maybePromoteBotDealOnPhoneReceived(deal, oldStage) || stageChanged;
-            } else {
-                validateStageBelongsToPipeline(deal.getStage(), deal.getPipeline());
-            }
-        } else if (request.stageId != null && deal.getPipeline() != null) {
+        if (request.stageId != null && deal.getPipeline() != null) {
             validateStageBelongsToPipeline(deal.getStage(), deal.getPipeline());
+        }
+        if (deal.getPipeline() != null) {
+            stageChanged = maybePromoteDealOnPhoneReceived(deal, oldStage) || stageChanged;
         }
         
         deal.setUpdatedAt(LocalDateTime.now());
@@ -733,12 +727,7 @@ public class DealServiceImpl implements DealService {
         if (stageChanged && savedDeal.getStage() != null) {
             dealStageHistoryService.recordStageEntry(savedDeal, savedDeal.getStage());
             
-            // Create activities ONLY if:
-            // 1. Deal was created by BOT (backend handles it)
-            // 2. Stage changed from "Lead In" to "Qualified"
-            // Frontend will handle activity creation for USER-created deals
-            if (savedDeal.getCreatedBy() == CreatedByType.BOT 
-                && oldStage != null && "Lead In".equalsIgnoreCase(oldStage.getName()) 
+            if (oldStage != null && "Lead In".equalsIgnoreCase(oldStage.getName())
                 && "Qualified".equalsIgnoreCase(savedDeal.getStage().getName())) {
                 createQualifiedStageActivities(savedDeal);
             }
@@ -1699,11 +1688,11 @@ public class DealServiceImpl implements DealService {
 
         List<Deal> deals = dealRepository.findByPersonAndIsDeletedFalse(person);
         for (Deal deal : deals) {
-            if (deal.getCreatedBy() != CreatedByType.BOT || deal.getPipeline() == null) {
+            if (deal.getPipeline() == null) {
                 continue;
             }
             Stage oldStage = deal.getStage();
-            if (maybePromoteBotDealOnPhoneReceived(deal, oldStage)) {
+            if (maybePromoteDealOnPhoneReceived(deal, oldStage)) {
                 Deal saved = dealRepository.save(deal);
                 dealStageHistoryService.recordStageEntry(saved, saved.getStage());
                 createQualifiedStageActivities(saved);
@@ -1751,22 +1740,15 @@ public class DealServiceImpl implements DealService {
         // Record stage change in history
         dealStageHistoryService.recordStageEntry(saved, stage);
         
-        // Create activities ONLY if:
-        // 1. Deal was created by BOT (backend handles it)
-        // 2. Stage changed from "Lead In" to "Qualified"
-        // Frontend will handle activity creation for USER-created deals
-        boolean isBotCreated = saved.getCreatedBy() == CreatedByType.BOT;
         boolean isFromLeadIn = oldStage != null && "Lead In".equalsIgnoreCase(oldStage.getName());
         boolean isToQualified = "Qualified".equalsIgnoreCase(stage.getName());
         
-        log.info("Activity creation check for deal {}: isBotCreated={}, isFromLeadIn={}, isToQualified={}", 
-            saved.getId(), isBotCreated, isFromLeadIn, isToQualified);
+        log.info("Activity creation check for deal {}: isFromLeadIn={}, isToQualified={}",
+            saved.getId(), isFromLeadIn, isToQualified);
         
-        if (isBotCreated && isFromLeadIn && isToQualified) {
-            log.info("All conditions met - calling createQualifiedStageActivities for deal {}", saved.getId());
+        if (isFromLeadIn && isToQualified) {
+            log.info("Deal {} moved from Lead In to Qualified - creating activities", saved.getId());
             createQualifiedStageActivities(saved);
-        } else {
-            log.info("Skipping activity creation for deal {} - conditions not met", saved.getId());
         }
 
         maybeCreateBridesideDivertedCopy(saved, oldStage, stage);
@@ -2535,6 +2517,9 @@ public class DealServiceImpl implements DealService {
         }
 
         validateStageBelongsToPipeline(deal.getStage(), pipeline);
+        if (hasPhone && "Lead In".equalsIgnoreCase(deal.getStage().getName())) {
+            deal.setStage(resolveStageForPipeline(pipeline, true));
+        }
     }
 
     private Stage resolveStageForPipeline(Pipeline pipeline, boolean hasPhone) {
@@ -2574,12 +2559,19 @@ public class DealServiceImpl implements DealService {
     }
 
     /**
-     * Moves a BOT-created deal from Lead In to Qualified when a phone number is present.
+     * Moves any Lead In deal to Qualified when a phone number is present.
+     * Covers bot deals, sheet deals, and deals created in the app.
      *
      * @return true if the stage was changed
      */
-    private boolean maybePromoteBotDealOnPhoneReceived(Deal deal, Stage oldStage) {
-        if (deal.getCreatedBy() != CreatedByType.BOT || deal.getPipeline() == null) {
+    private boolean maybePromoteDealOnPhoneReceived(Deal deal, Stage oldStage) {
+        if (deal.getPipeline() == null) {
+            return false;
+        }
+        Stage current = deal.getStage();
+        boolean wasLeadIn = oldStage == null || "Lead In".equalsIgnoreCase(oldStage.getName());
+        boolean stillLeadIn = current == null || "Lead In".equalsIgnoreCase(current.getName());
+        if (!wasLeadIn || !stillLeadIn) {
             return false;
         }
         if (!hasPhoneNumber(deal.getContactNumber(), deal.getPhoneNumber(),
@@ -2688,19 +2680,13 @@ public class DealServiceImpl implements DealService {
     }
     
     /**
-     * Creates activities when a deal moves from "Lead In" to "Qualified" stage.
-     * Creates "Make first call" and "Send Quotes" activities assigned to the team manager.
-     * This method should ONLY be called for BOT-created deals.
-     * Frontend handles activity creation for USER-created deals.
+     * Creates "Make first call" and "Send Quotes" when a deal is in Qualified.
+     * Applies to every pipeline and every source: bot, sheet import, or a user move.
+     * Skips when the deal has no phone, or when both activities are already saved.
      */
     private void createQualifiedStageActivities(Deal deal) {
-        // Double-check: Only create for BOT-created deals
-        if (deal.getCreatedBy() != CreatedByType.BOT) {
-            log.warn("Skipping activity creation for deal {} - not created by BOT", deal.getId());
-            return;
-        }
         try {
-            log.info("Creating activities for Qualified stage deal {} (BOT-created)", deal.getId());
+            log.info("Creating activities for Qualified stage deal {}", deal.getId());
             
             // Reload deal from database to ensure we have fresh data with all relationships
             Deal freshDeal = dealRepository.findById(deal.getId())
@@ -2882,9 +2868,7 @@ public class DealServiceImpl implements DealService {
             String organizationName = organization != null ? organization.getName() : null;
             
             // 4. Check for existing activities to prevent duplicates
-            List<Activity> existingActivities = activityRepository.findAll().stream()
-                .filter(a -> freshDeal.getId().equals(a.getDealId()))
-                .collect(Collectors.toList());
+            List<Activity> existingActivities = activityRepository.findByDealId(freshDeal.getId());
             
             boolean hasMakeFirstCall = existingActivities.stream()
                 .anyMatch(a -> "Make first call".equals(a.getSubject()));
