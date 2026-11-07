@@ -56,6 +56,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -2882,8 +2883,8 @@ public class DealServiceImpl implements DealService {
 
             assignedUserName = truncateActivityAssignedUser(assignedUserName);
             
-            // 5. Calculate today's date in DD/MM/YYYY format
-            LocalDate today = LocalDate.now();
+            // 5. Today's date in India. The server clock can still be on the previous day just after midnight.
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
             String todayStr = today.format(formatter);
             
