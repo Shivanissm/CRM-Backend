@@ -1,11 +1,13 @@
 package com.brideside.crm.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import com.brideside.crm.entity.CreatedByType;
 import com.brideside.crm.entity.DealStatus;
+import com.brideside.crm.json.IndiaWallClockSerializer;
 
 public class DealResponse {
     public Long id;
@@ -22,7 +24,9 @@ public class DealResponse {
     public String eventType;
     public DealStatus status;
     public BigDecimal commissionAmount;
+    @JsonSerialize(using = IndiaWallClockSerializer.class)
     public LocalDateTime createdAt;
+    @JsonSerialize(using = IndiaWallClockSerializer.class)
     public LocalDateTime updatedAt;
     public String venue;
     public String phoneNumber;
@@ -50,8 +54,10 @@ public class DealResponse {
     public String lostReason; // Reason why deal was marked as LOST: "Slot not opened", "Not Interested", "Date postponed", "Not Available", "Ghosted", "Budget", "Booked Someone else"
     public BigDecimal clientBudget; // Client's budget amount (set when lost reason is "Budget")
     @JsonProperty("won_at")
+    @JsonSerialize(using = IndiaWallClockSerializer.class)
     public LocalDateTime wonAt; // When the deal was marked as WON (null if not won or later changed to LOST/IN_PROGRESS)
     @JsonProperty("lost_at")
+    @JsonSerialize(using = IndiaWallClockSerializer.class)
     public LocalDateTime lostAt; // When the deal was marked as LOST (null if not lost or later changed to WON/IN_PROGRESS)
     public CreatedByType createdBy; // USER or BOT - who created the deal
     public Long createdByUserId; // User ID if created by USER
