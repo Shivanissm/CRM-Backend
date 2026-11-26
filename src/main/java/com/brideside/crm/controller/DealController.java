@@ -38,6 +38,7 @@ public class DealController {
     private DealStageHistoryService dealStageHistoryService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ThreadLocal<Boolean> skipSharedPipelineNames = new ThreadLocal<>();
 
     @PostMapping
     @Operation(
@@ -133,9 +134,7 @@ public class DealController {
                 dateFrom, dateTo, search, source, sortField, sortDirection, limit, offset, stageId, personId
         );
         
-        List<DealResponse> deals = dealEntities.stream()
-            .map(this::toResponse)
-            .collect(Collectors.toList());
+        List<DealResponse> deals = toResponses(dealEntities);
         
         // Get total count with same filters (before pagination)
         long totalCount = dealService.count(
@@ -164,42 +163,42 @@ public class DealController {
     @GetMapping("/won")
     @Operation(summary = "List won deals")
     public ResponseEntity<List<DealResponse>> listWon() {
-        List<DealResponse> res = dealService.listWon().stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listWon());
         return ResponseEntity.ok(res);
     }
 
     @GetMapping("/lost")
     @Operation(summary = "List lost deals")
     public ResponseEntity<List<DealResponse>> listLost() {
-        List<DealResponse> res = dealService.listByStatus(DealStatus.LOST).stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listByStatus(DealStatus.LOST));
         return ResponseEntity.ok(res);
     }
 
     @GetMapping("/inprogress")
     @Operation(summary = "List in-progress deals")
     public ResponseEntity<List<DealResponse>> listInProgress() {
-        List<DealResponse> res = dealService.listByStatus(DealStatus.IN_PROGRESS).stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listByStatus(DealStatus.IN_PROGRESS));
         return ResponseEntity.ok(res);
     }
 
     @GetMapping("/person/{personId}")
     @Operation(summary = "List deals for a person")
     public ResponseEntity<List<DealResponse>> listByPerson(@PathVariable Long personId) {
-        List<DealResponse> res = dealService.listByPerson(personId).stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listByPerson(personId));
         return ResponseEntity.ok(res);
     }
 
     @GetMapping("/organization/{organizationId}")
     @Operation(summary = "List deals for an organization")
     public ResponseEntity<List<DealResponse>> listByOrganization(@PathVariable Long organizationId) {
-        List<DealResponse> res = dealService.listByOrganization(organizationId).stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listByOrganization(organizationId));
         return ResponseEntity.ok(res);
     }
 
     @GetMapping("/category/{categoryId}")
     @Operation(summary = "List deals for a category")
     public ResponseEntity<List<DealResponse>> listByCategory(@PathVariable Long categoryId) {
-        List<DealResponse> res = dealService.listByCategory(categoryId).stream().map(this::toResponse).collect(Collectors.toList());
+        List<DealResponse> res = toResponses(dealService.listByCategory(categoryId));
         return ResponseEntity.ok(res);
     }
 
@@ -338,7 +337,38 @@ public class DealController {
             r.ownerId = d.getOwnerId();
             r.ownerDisplayName = null;
         }
+        if (!Boolean.TRUE.equals(skipSharedPipelineNames.get())) {
+            attachSharedPipelineNames(List.of(r));
+        }
         return r;
+    }
+
+    private List<DealResponse> toResponses(List<Deal> deals) {
+        skipSharedPipelineNames.set(Boolean.TRUE);
+        try {
+            List<DealResponse> responses = deals.stream().map(this::toResponse).collect(Collectors.toList());
+            attachSharedPipelineNames(responses);
+            return responses;
+        } finally {
+            skipSharedPipelineNames.remove();
+        }
+    }
+
+    private void attachSharedPipelineNames(List<DealResponse> deals) {
+        if (deals == null || deals.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>();
+        for (DealResponse deal : deals) {
+            if (deal.id != null) {
+                ids.add(deal.id);
+            }
+        }
+        Map<Long, List<String>> namesByDeal = dealService.sharedPipelineNames(ids);
+        for (DealResponse deal : deals) {
+            List<String> names = namesByDeal.get(deal.id);
+            deal.sharedPipelineNames = (names == null || names.isEmpty()) ? null : names;
+        }
     }
 
     @GetMapping("/{dealId}/available-pipelines")

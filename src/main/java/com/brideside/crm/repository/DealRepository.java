@@ -168,6 +168,17 @@ public interface DealRepository extends JpaRepository<Deal, Long>, JpaSpecificat
     List<Object[]> countLostDealsByStageAndCategory();
 
     /**
+     * Live deals with the fields used to tell that the same person is in another pipeline.
+     * Returns [dealId, pipelineId, pipelineName, personId, personPhone, instagramId, contactNumber, phoneNumber].
+     */
+    @Query(value = "SELECT d.id, d.pipeline_id, pl.name, d.person_id, p.phone, p.instagram_id, d.contact_number, d.phone_number " +
+            "FROM deals d " +
+            "LEFT JOIN persons p ON p.id = d.person_id " +
+            "LEFT JOIN pipelines pl ON pl.id = d.pipeline_id " +
+            "WHERE d.is_deleted = 0 OR d.is_deleted IS NULL", nativeQuery = true)
+    List<Object[]> findLiveDealPipelineKeys();
+
+    /**
      * Non-deleted deals in the pipeline for the same person (any deal row, not only auto-diverted).
      */
     @Query("SELECT COUNT(d) FROM Deal d WHERE d.pipeline.id = :pipelineId AND d.person.id = :personId "

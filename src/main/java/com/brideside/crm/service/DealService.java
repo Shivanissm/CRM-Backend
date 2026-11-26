@@ -6,6 +6,7 @@ import com.brideside.crm.entity.Deal;
 import com.brideside.crm.entity.DealStatus;
 
 import java.util.List;
+import java.util.Map;
 
 public interface DealService {
     Deal create(DealDtos.CreateRequest request);
@@ -21,6 +22,12 @@ public interface DealService {
                Long personId);
     List<com.brideside.crm.dto.PersonDTO> getPersonsByDealIds(List<Long> dealIds);
     List<com.brideside.crm.dto.ActivityDTO> getActivitiesByDealIds(List<Long> dealIds);
+
+    /**
+     * Other pipeline names where this same person already has a live deal.
+     * Matched by person, phone, or Instagram. The card's own pipeline is left out.
+     */
+    Map<Long, List<String>> sharedPipelineNames(List<Long> dealIds);
     List<Deal> listWon();
     List<Deal> listByStatus(DealStatus status);
     List<Deal> listByPerson(Long personId);

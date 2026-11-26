@@ -2040,6 +2040,160 @@ public class DealServiceImpl implements DealService {
         }
     }
 
+    private static final Set<String> IGNORED_INSTAGRAM = Set.of(
+            "n/a", "na", "n.a", "n.a.", "none", "null", "divert", "-", "--", ".", "instagram");
+
+    @Override
+    public Map<Long, List<String>> sharedPipelineNames(List<Long> dealIds) {
+        if (dealIds == null || dealIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<Long> wanted = new HashSet<>();
+        for (Long id : dealIds) {
+            if (id != null) {
+                wanted.add(id);
+            }
+        }
+        if (wanted.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, DealPipelineKey> byId = new HashMap<>();
+        Map<Long, List<DealPipelineKey>> byPerson = new HashMap<>();
+        Map<String, List<DealPipelineKey>> byPhone = new HashMap<>();
+        Map<String, List<DealPipelineKey>> byInstagram = new HashMap<>();
+        for (Object[] row : dealRepository.findLiveDealPipelineKeys()) {
+            DealPipelineKey key = DealPipelineKey.from(row);
+            if (key == null) {
+                continue;
+            }
+            byId.put(key.id, key);
+            if (key.personId != null) {
+                byPerson.computeIfAbsent(key.personId, ignored -> new ArrayList<>()).add(key);
+            }
+            for (String phone : key.phones) {
+                byPhone.computeIfAbsent(phone, ignored -> new ArrayList<>()).add(key);
+            }
+            if (key.instagram != null) {
+                byInstagram.computeIfAbsent(key.instagram, ignored -> new ArrayList<>()).add(key);
+            }
+        }
+
+        Map<Long, List<String>> result = new HashMap<>();
+        for (Long id : wanted) {
+            DealPipelineKey self = byId.get(id);
+            if (self == null || self.pipelineId == null) {
+                continue;
+            }
+            Map<Long, String> others = new HashMap<>();
+            addOtherPipelines(others, self, self.personId == null ? null : byPerson.get(self.personId));
+            for (String phone : self.phones) {
+                addOtherPipelines(others, self, byPhone.get(phone));
+            }
+            if (self.instagram != null) {
+                addOtherPipelines(others, self, byInstagram.get(self.instagram));
+            }
+            if (!others.isEmpty()) {
+                List<String> names = new ArrayList<>(others.values());
+                names.sort(String.CASE_INSENSITIVE_ORDER);
+                result.put(id, names);
+            }
+        }
+        return result;
+    }
+
+    private static void addOtherPipelines(Map<Long, String> others, DealPipelineKey self, List<DealPipelineKey> matches) {
+        if (matches == null) {
+            return;
+        }
+        for (DealPipelineKey match : matches) {
+            if (match.pipelineId == null || match.pipelineId.equals(self.pipelineId)) {
+                continue;
+            }
+            if (match.pipelineName == null || match.pipelineName.isBlank()) {
+                continue;
+            }
+            others.putIfAbsent(match.pipelineId, match.pipelineName);
+        }
+    }
+
+    private static Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return null;
+    }
+
+    private static String phoneKey(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String digits = value.toString().replaceAll("\\D", "");
+        if (digits.length() < 10) {
+            return null;
+        }
+        String last = digits.substring(digits.length() - 10);
+        boolean allSame = true;
+        for (int i = 1; i < last.length(); i++) {
+            if (last.charAt(i) != last.charAt(0)) {
+                allSame = false;
+                break;
+            }
+        }
+        return allSame ? null : last;
+    }
+
+    private static String instagramKey(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String handle = value.toString().trim().toLowerCase().replace("@", "");
+        if (handle.isEmpty() || IGNORED_INSTAGRAM.contains(handle)) {
+            return null;
+        }
+        return handle;
+    }
+
+    private static final class DealPipelineKey {
+        final Long id;
+        final Long pipelineId;
+        final String pipelineName;
+        final Long personId;
+        final Set<String> phones;
+        final String instagram;
+
+        DealPipelineKey(Long id, Long pipelineId, String pipelineName, Long personId, Set<String> phones, String instagram) {
+            this.id = id;
+            this.pipelineId = pipelineId;
+            this.pipelineName = pipelineName;
+            this.personId = personId;
+            this.phones = phones;
+            this.instagram = instagram;
+        }
+
+        static DealPipelineKey from(Object[] row) {
+            Long id = asLong(row[0]);
+            if (id == null) {
+                return null;
+            }
+            Set<String> phones = new HashSet<>();
+            String personPhone = phoneKey(row[4]);
+            String contactNumber = phoneKey(row[6]);
+            String phoneNumber = phoneKey(row[7]);
+            if (personPhone != null) {
+                phones.add(personPhone);
+            }
+            if (contactNumber != null) {
+                phones.add(contactNumber);
+            }
+            if (phoneNumber != null) {
+                phones.add(phoneNumber);
+            }
+            String pipelineName = row[2] == null ? null : row[2].toString().trim();
+            return new DealPipelineKey(id, asLong(row[1]), pipelineName, asLong(row[3]), phones, instagramKey(row[5]));
+        }
+    }
+
     /**
      * When a deal leaves Lead In / Qualified for Contact Made or a later stage in a non-Brideside pipeline,
      * creates one mirrored deal in The Bride Side (TBS) pipeline at Qualified, unless a duplicate already exists.
@@ -2293,12 +2447,9 @@ public class DealServiceImpl implements DealService {
             }
         }
         
-        // Get pipelines the current user is allowed to see (Sales/Pre-Sales: team-linked only)
+        // Divert targets are every pipeline, including other categories.
+        // The deals board stays limited to the user's own teams.
         List<Pipeline> allPipelines = pipelineRepository.findByDeletedFalseOrderByNameAsc();
-        Set<Long> visiblePipelineIds = pipelineService.getVisiblePipelineIds();
-        allPipelines = allPipelines.stream()
-                .filter(pipeline -> pipeline.getId() != null && visiblePipelineIds.contains(pipeline.getId()))
-                .collect(Collectors.toList());
         
         // Get all deals in the diversion chain (current deal + all deals it references)
         List<Deal> dealsInChain = getAllDealsInChain(deal);
@@ -2344,7 +2495,10 @@ public class DealServiceImpl implements DealService {
                     
                     return true;
                 })
-                .map(pipeline -> PipelineMapper.toPipelineResponse(pipeline, Collections.emptyList(), false))
+                .map(pipeline -> PipelineMapper.toPipelineResponse(
+                        pipeline,
+                        stageRepository.findByPipelineOrderByOrderIndexAsc(pipeline),
+                        true))
                 .collect(Collectors.toList());
     }
     
