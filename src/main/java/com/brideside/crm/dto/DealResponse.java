@@ -50,6 +50,8 @@ public class DealResponse {
     public Long referencedPipelineId; // ID of the pipeline from which the deal was diverted
     public Long sourcePipelineId; // ID of the initial/source pipeline where the deal was first created
     public String pipelineHistory; // JSON array of pipeline IDs the deal has been in: [1, 2, 3]
+    /** Other pipeline names where this same person also has a live deal. Null when there are none. */
+    public List<String> sharedPipelineNames;
     public Boolean isDeleted; // true if this deal has been soft deleted
     public String lostReason; // Reason why deal was marked as LOST: "Slot not opened", "Not Interested", "Date postponed", "Not Available", "Ghosted", "Budget", "Booked Someone else"
     public BigDecimal clientBudget; // Client's budget amount (set when lost reason is "Budget")
